@@ -329,7 +329,11 @@ function encodeHrefPath(href) {
 }
 
 function encodeAnchor(anchor) {
-  return encodeURIComponent(anchor);
+  return obsidianHeadingToGithubFragment(anchor);
+}
+
+function obsidianHeadingToGithubFragment(heading) {
+  return heading.trim().toLowerCase().replace(/\s+/g, '-');
 }
 
 function printSummary() {

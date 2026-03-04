@@ -11,6 +11,8 @@ const markdownFiles = globSync('**/*.md', {
   nodir: true,
   windowsPathsNoEscape: true,
 });
+const markdownFileSet = new Set(markdownFiles.map((p) => toPosix(p)));
+const headingMapCache = new Map();
 
 const allFiles = globSync('**/*', {
   cwd: INPUT_DIR,
@@ -34,7 +36,7 @@ for (const relPath of markdownFiles) {
   const inPath = path.join(INPUT_DIR, relPath);
   const outPath = path.join(OUTPUT_DIR, relPath);
   const source = fs.readFileSync(inPath, 'utf8');
-  const converted = convertMarkdownToObsidian(source);
+  const converted = convertMarkdownToObsidian(source, toPosix(relPath));
 
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, converted, 'utf8');
@@ -42,7 +44,7 @@ for (const relPath of markdownFiles) {
 
 console.log(`Converted ${markdownFiles.length} markdown files to Obsidian format.`);
 
-function convertMarkdownToObsidian(input) {
+function convertMarkdownToObsidian(input, currentRelPath) {
   // Convert images first so they don't get picked up by the normal-link regex.
   let output = input.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (full, _alt, rawHref) => {
     const href = stripOptionalTitle(rawHref);
@@ -77,7 +79,10 @@ function convertMarkdownToObsidian(input) {
       return full;
     }
 
-    const targetWithAnchor = anchor ? `${noteName}#${anchor}` : noteName;
+    const obsidianAnchor = anchor
+      ? resolveAnchorHeadingCase(currentRelPath, targetPath, anchor)
+      : '';
+    const targetWithAnchor = obsidianAnchor ? `${noteName}#${obsidianAnchor}` : noteName;
     return text === noteName
       ? `[[${targetWithAnchor}]]`
       : `[[${targetWithAnchor}|${text}]]`;
@@ -114,4 +119,85 @@ function splitOnFirst(input, delimiter) {
     return [input, ''];
   }
   return [input.slice(0, idx), input.slice(idx + 1)];
+}
+
+function githubFragmentToObsidianHeading(fragment) {
+  return decodeURIComponent(fragment).replace(/-/g, ' ').trim();
+}
+
+function resolveAnchorHeadingCase(currentRelPath, linkTargetPath, fragment) {
+  const normalizedTarget = resolveTargetNotePath(currentRelPath, linkTargetPath);
+  if (!normalizedTarget) {
+    return githubFragmentToObsidianHeading(fragment);
+  }
+
+  const headingMap = getHeadingMap(normalizedTarget);
+  const key = normalizeGithubFragment(fragment);
+  return headingMap.get(key) || githubFragmentToObsidianHeading(fragment);
+}
+
+function resolveTargetNotePath(currentRelPath, linkTargetPath) {
+  const currentDir = path.posix.dirname(currentRelPath);
+  const candidate = path.posix.normalize(path.posix.join(currentDir, linkTargetPath));
+  if (candidate.startsWith('../')) {
+    return null;
+  }
+  return markdownFileSet.has(candidate) ? candidate : null;
+}
+
+function getHeadingMap(relPath) {
+  if (headingMapCache.has(relPath)) {
+    return headingMapCache.get(relPath);
+  }
+
+  const absPath = path.join(INPUT_DIR, fromPosix(relPath));
+  const content = fs.readFileSync(absPath, 'utf8');
+  const map = new Map();
+  let inFence = false;
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.replace(/^\uFEFF/, '').trimEnd();
+    const fenceMatch = line.match(/^```/);
+    if (fenceMatch) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) {
+      continue;
+    }
+
+    const headingMatch = line.match(/^#{1,6}\s+(.+?)\s*#*\s*$/);
+    if (!headingMatch) {
+      continue;
+    }
+
+    const headingText = headingMatch[1].trim();
+    if (!headingText) {
+      continue;
+    }
+
+    const key = normalizeGithubFragment(headingToGithubFragment(headingText));
+    if (!map.has(key)) {
+      map.set(key, headingText);
+    }
+  }
+
+  headingMapCache.set(relPath, map);
+  return map;
+}
+
+function headingToGithubFragment(heading) {
+  return heading.trim().toLowerCase().replace(/\s+/g, '-');
+}
+
+function normalizeGithubFragment(fragment) {
+  return decodeURIComponent(fragment).trim().toLowerCase().replace(/\s+/g, '-');
+}
+
+function toPosix(value) {
+  return value.replaceAll('\\', '/');
+}
+
+function fromPosix(value) {
+  return value.replaceAll('/', path.sep);
 }
