@@ -1,5 +1,0 @@
----
-aliases:
-  - Gideon
----
-#Person #Player

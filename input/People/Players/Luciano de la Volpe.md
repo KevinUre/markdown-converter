@@ -1,5 +1,0 @@
----
-aliases:
-  - Luci
----
-#Person #Player

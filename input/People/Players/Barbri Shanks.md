@@ -1,5 +1,0 @@
----
-aliases:
-  - Barbri
----
-#Person #Player
